@@ -1,229 +1,89 @@
-<h1 align="center" style="border-bottom: none">
-    <a href="https://prometheus.io" target="_blank"><img alt="Prometheus" src="/documentation/images/prometheus-logo.svg"></a><br>Prometheus
-</h1>
+# UniSaaS.UniCORE.Prometheus
 
-<p align="center">Visit <a href="https://prometheus.io" target="_blank">prometheus.io</a> for the full documentation,
-examples and guides.</p>
+**SCAFFOLD-ANCHOR repository — initial scaffold 2026-06-04.**
 
-<div align="center">
+Full scaffolding, upstream-fork integration, and source-code work all pending a fresh dedicated kickoff arc. This initial commit exists to lock the repository's identity, licence position, and place in the UniCORE Sanity Check fleet so the work cannot be forgotten.
 
-[![CI](https://github.com/prometheus/prometheus/actions/workflows/ci.yml/badge.svg)](https://github.com/prometheus/prometheus/actions/workflows/ci.yml)
-[![Docker Repository on Quay](https://quay.io/repository/prometheus/prometheus/status)][quay]
-[![Docker Pulls](https://img.shields.io/docker/pulls/prom/prometheus.svg?maxAge=604800)][hub]
-[![Go Report Card](https://goreportcard.com/badge/github.com/prometheus/prometheus)](https://goreportcard.com/report/github.com/prometheus/prometheus)
-[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/486/badge)](https://bestpractices.coreinfrastructure.org/projects/486)
-[![govulncheck](https://github.com/prometheus/prometheus/actions/workflows/govulncheck.yml/badge.svg?event=schedule)](https://github.com/prometheus/prometheus/actions/workflows/govulncheck.yml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/prometheus/prometheus/badge)](https://securityscorecards.dev/viewer/?uri=github.com/prometheus/prometheus)
-[![CLOMonitor](https://img.shields.io/endpoint?url=https://clomonitor.io/api/projects/cncf/prometheus/badge)](https://clomonitor.io/projects/cncf/prometheus)
-[![Fuzzing Status](https://oss-fuzz-build-logs.storage.googleapis.com/badges/prometheus.svg)](https://bugs.chromium.org/p/oss-fuzz/issues/list?sort=-opened&can=1&q=proj:prometheus)
+Author: **Bryan Fred, Unitek Systems Limited, Bedford, United Kingdom.**
+First commit: **2026-06-04 17:45 UTC.**
 
-</div>
+---
 
-Prometheus, a [Cloud Native Computing Foundation](https://cncf.io/) project, is a systems and service monitoring system. It collects metrics
-from configured targets at given intervals, evaluates rule expressions,
-displays the results, and can trigger alerts when specified conditions are observed.
+## What this repository is
 
-The features that distinguish Prometheus from other metrics and monitoring systems are:
+`bryanunitek/UniSaaS.UniCORE.Prometheus` is the **Prometheus** family member: SaaS-deployment-shape public gift surface. Documentation today; source code at certification.
 
-* A **multi-dimensional** data model (time series defined by metric name and set of key/value dimensions)
-* PromQL, a **powerful and flexible query language** to leverage this dimensionality
-* No dependency on distributed storage; **single server nodes are autonomous**
-* An HTTP **pull model** for time series collection
-* **Pushing time series** is supported via an intermediary gateway for batch jobs
-* Targets are discovered via **service discovery** or **static configuration**
-* Multiple modes of **graphing and dashboarding support**
-* Support for hierarchical and horizontal **federation**
+**Family purpose:** Open-source metrics collection — time-series metrics backend for UniCORE.GVB observability.
 
-## Architecture overview
+**Deployment shape:** This is the **SaaS-shape** member of the family. It tracks the same upstream codebase as [`UniCORE.Prometheus`](https://github.com/bryanunitek/UniCORE.Prometheus) (on-prem shape) but carries SaaS-specific configuration, multi-tenant isolation patterns, and cloud-native deployment artefacts.
 
-![Architecture overview](documentation/images/architecture.svg)
+---
 
-## Install
+## Upstream
 
-There are various ways to install Prometheus.
+- **Upstream project:** https://github.com/prometheus/prometheus
+- **Upstream licence:** Apache-2.0
+- **Our relationship:** Fork-and-extend. Upstream codebase is consumed verbatim under its original licence; our additions sit on top under CC BY 4.0.
 
-### Precompiled binaries
+The merge discipline that governs how this repository absorbs upstream changes is documented in [`UPSTREAM-MERGE-DISCIPLINE.md`](UPSTREAM-MERGE-DISCIPLINE.md).
 
-Precompiled binaries for released versions are available in the
-[*download* section](https://prometheus.io/download/)
-on [prometheus.io](https://prometheus.io). Using the latest production release binary
-is the recommended way to install Prometheus.
-See the [Installing](https://prometheus.io/docs/introduction/install/)
-chapter in the documentation for all the details.
+---
 
-### Docker images
+## Platforms
 
-Docker images are available on [Quay.io](https://quay.io/repository/prometheus/prometheus) or [Docker Hub](https://hub.docker.com/r/prom/prometheus/).
+Windows · Linux · macOS · iOS · Android
 
-You can launch a Prometheus container for trying it out with
+---
 
-```bash
-docker run --name prometheus -d -p 127.0.0.1:9090:9090 prom/prometheus
-```
+## Family — the four-repo pattern
 
-Prometheus will now be reachable at <http://localhost:9090/>.
+UniCORE.Prometheus is published as a **four-repo family**:
 
-### Building from source
+- `bryanunitek/UniCORE.Prometheus` — public on-prem-deployment-shape gift surface
+- `bryanunitek/UniSaaS.UniCORE.Prometheus` — public SaaS-deployment-shape gift surface ← **this repo**
+- `bryanunitek/UniCORE.Prometheus-Claw` (private) — on-prem-shape working repository
+- `bryanunitek/UniSaaS.UniCORE.Prometheus-Claw` (private) — SaaS-shape working repository
 
-To build Prometheus from source code, you need:
+---
 
-* Go: Version specified in [go.mod](./go.mod) or greater.
-* NodeJS: Version specified in [.nvmrc](./web/ui/.nvmrc) or greater.
-* npm: Version 10 or greater (check with `npm --version` and [here](https://www.npmjs.com/)).
+## Status
 
-Start by cloning the repository:
+**SCAFFOLD-ANCHOR** as of 2026-06-04. See [`STATUS.md`](STATUS.md) for the full status breakdown.
 
-```bash
-git clone https://github.com/prometheus/prometheus.git
-cd prometheus
-```
+---
 
-You can use the `go` tool to build and install the `prometheus`
-and `promtool` binaries into your `GOPATH`:
+## Files in this scaffold commit
 
-```bash
-go install github.com/prometheus/prometheus/cmd/...
-prometheus --config.file=your_config.yml
-```
+- [`README.md`](README.md) — this file
+- [`LICENSE.md`](LICENSE.md) — UniCORE additions licence
+- [`STATUS.md`](STATUS.md) — scaffold-anchor status
+- [`UPSTREAM-MERGE-DISCIPLINE.md`](UPSTREAM-MERGE-DISCIPLINE.md) — canonical merge discipline
+- [`AI-AUTHORSHIP.md`](AI-AUTHORSHIP.md) — AI authorship disclosure
 
-*However*, when using `go install` to build Prometheus, Prometheus will expect to be able to
-read its web assets from local filesystem directories under `web/ui/static`. In order for
-these assets to be found, you will have to run Prometheus from the root of the cloned
-repository. Note also that this directory does not include the React UI unless it has been
-built explicitly using `make assets` or `make build`.
+---
 
-An example of the above configuration file can be found [here.](https://github.com/prometheus/prometheus/blob/main/documentation/examples/prometheus.yml)
+## Related repositories — UniCORE programme
 
-You can also build using `make build`, which will compile in the web assets so that
-Prometheus can be run from anywhere:
+**Foundation triad (gift, public, CC BY 4.0):**
+- [`UniVERSE`](https://github.com/bryanunitek/UniVERSE) — programme
+- [`TrueAI`](https://github.com/bryanunitek/TrueAI) — Foundation (Nine Invariants)
+- [`UniCORE-AI`](https://github.com/bryanunitek/UniCORE-AI) — reference architecture (12 Levels)
 
-```bash
-make build
-./prometheus --config.file=your_config.yml
-```
+**Implementation reference (deployment-shape pair):**
+- [`UniCORE`](https://github.com/bryanunitek/UniCORE) — on-prem-shape
+- [`UniSaaS.UniCORE`](https://github.com/bryanunitek/UniSaaS.UniCORE) — SaaS-shape
 
-The Makefile provides several targets:
+**Substrate-services layer (deployment-shape pair):**
+- [`UniCORE.GVB`](https://github.com/bryanunitek/UniCORE.GVB) — on-prem-shape
+- [`UniSaaS.UniCORE.GVB`](https://github.com/bryanunitek/UniSaaS.UniCORE.GVB) — SaaS-shape
 
-* *build*: build the `prometheus` and `promtool` binaries (includes building and compiling in web assets)
-* *test*: run the tests
-* *test-short*: run the short tests
-* *format*: format the source code
-* *vet*: check the source code for common errors
-* *assets*: build the React UI
+---
 
-### Service discovery plugins
+## Contact
 
-Prometheus is bundled with many service discovery plugins. You can customize
-which service discoveries are included in your build using Go build tags.
+- **Public discussion:** [GitHub Discussions](https://github.com/bryanunitek/UniSaaS.UniCORE.Prometheus/discussions)
+- **Private contact / connection request:** [LinkedIn — Bryan Fred](https://www.linkedin.com/in/bryan-fred-02209753/)
 
-To exclude service discoveries when building with `make build`, add the desired
-tags to the `.promu.yml` file under `build.tags.all`:
+---
 
-```yaml
-build:
-    tags:
-        all:
-            - netgo
-            - builtinassets
-            - remove_all_sd           # Exclude all optional SDs
-            - enable_kubernetes_sd    # Re-enable only kubernetes
-```
-
-Then run `make build` as usual. Alternatively, when using `go build` directly:
-
-```bash
-go build -tags "remove_all_sd,enable_kubernetes_sd" ./cmd/prometheus
-```
-
-Available build tags:
-* `remove_all_sd` - Exclude all optional service discoveries (keeps file_sd, static_sd, and http_sd)
-* `enable_<name>_sd` - Re-enable a specific SD when using `remove_all_sd`
-
-If you add out-of-tree plugins, which we do not endorse at the moment,
-additional steps might be needed to adjust the `go.mod` and `go.sum` files. As
-always, be extra careful when loading third party code.
-
-### Building the Docker image
-
-You can build a docker image locally with the following commands:
-
-```bash
-make promu
-promu crossbuild -p linux/amd64
-make npm_licenses
-make common-docker-amd64
-```
-
-The `make docker` target is intended only for use in our CI system and will not
-produce a fully working image when run locally.
-
-## Using Prometheus as a Go Library
-
-Within the Prometheus project, repositories such as [prometheus/common](https://github.com/prometheus/common) and
-[prometheus/client-golang](https://github.com/prometheus/client-golang) are designed as re-usable libraries.
-
-The [prometheus/prometheus](https://github.com/prometheus/prometheus) repository builds a stand-alone program and is not
-designed for use as a library. We are aware that people do use parts as such,
-and we do not put any deliberate inconvenience in the way, but we want you to be
-aware that no care has been taken to make it work well as a library. For instance,
-you may encounter errors that only surface when used as a library.
-
-### Remote Write
-
-We are publishing our Remote Write protobuf independently at
-[buf.build](https://buf.build/prometheus/prometheus/assets).
-
-You can use that as a library:
-
-```shell
-go get buf.build/gen/go/prometheus/prometheus/protocolbuffers/go@latest
-```
-
-This is experimental.
-
-### Prometheus code base
-
-In order to comply with [go mod](https://go.dev/ref/mod#versions) rules,
-Prometheus release number do not exactly match Go module releases.
-
-For the
-Prometheus v3.y.z releases, we are publishing equivalent v0.3y.z tags. The y in v0.3y.z is always padded to two digits, with a leading zero if needed.
-
-Therefore, a user that would want to use Prometheus v3.0.0 as a library could do:
-
-```shell
-go get github.com/prometheus/prometheus@v0.300.0
-```
-
-For the
-Prometheus v2.y.z releases, we published the equivalent v0.y.z tags.
-
-Therefore, a user that would want to use Prometheus v2.35.0 as a library could do:
-
-```shell
-go get github.com/prometheus/prometheus@v0.35.0
-```
-
-This solution makes it clear that we might break our internal Go APIs between
-minor user-facing releases, as [breaking changes are allowed in major version
-zero](https://semver.org/#spec-item-4).
-
-## React UI Development
-
-For more information on building, running, and developing on the React-based UI, see the React app's [README.md](web/ui/README.md).
-
-## More information
-
-* Godoc documentation is available via [pkg.go.dev](https://pkg.go.dev/github.com/prometheus/prometheus). Due to peculiarities of Go Modules, v3.y.z will be displayed as v0.3y.z (the y in v0.3y.z is always padded to two digits, with a leading zero if needed), while v2.y.z will be displayed as v0.y.z.
-* See the [Community page](https://prometheus.io/community) for how to reach the Prometheus developers and users on various communication channels.
-
-## Contributing
-
-Refer to [CONTRIBUTING.md](https://github.com/prometheus/prometheus/blob/main/CONTRIBUTING.md)
-
-## License
-
-Apache License 2.0, see [LICENSE](https://github.com/prometheus/prometheus/blob/main/LICENSE).
-
-[hub]: https://hub.docker.com/r/prom/prometheus/
-[quay]: https://quay.io/repository/prometheus/prometheus
+*Author: Bryan Fred, Unitek Systems Limited, Bedford, United Kingdom. Public. Given, not sold. Irrevocable.*
