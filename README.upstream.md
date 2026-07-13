@@ -210,7 +210,7 @@ zero](https://semver.org/#spec-item-4).
 
 ## React UI Development
 
-For more information on building, running, and developing on the React-based UI, see the React app's [README.md](web/ui/README.md).
+For more information on building, running, and developing on the React-based UI, see the React app's [README.md](https://git.unitek-systems.com/UniCORE/UniSaaS.UniCORE.Prometheus/src/branch/main/web/ui/README.md) (mirror: [GitHub](https://github.com/bryanunitek/UniSaaS.UniCORE.Prometheus/blob/main/web/ui/README.md)).
 
 ## More information
 
