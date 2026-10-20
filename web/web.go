@@ -298,6 +298,8 @@ type Options struct {
 	UseOldUI                   bool
 	EnableLifecycle            bool
 	EnableAdminAPI             bool
+	EnableSearch               bool
+	MaxSearchLimit             int
 	PageTitle                  string
 	RemoteReadSampleLimit      int
 	RemoteReadConcurrencyLimit int
@@ -404,6 +406,8 @@ func New(logger *slog.Logger, o *Options) *Handler {
 		h.options.LocalStorage,
 		h.options.TSDBDir,
 		h.options.EnableAdminAPI,
+		h.options.EnableSearch,
+		h.options.MaxSearchLimit,
 		logger,
 		FactoryRr,
 		h.options.RemoteReadSampleLimit,
@@ -430,8 +434,9 @@ func New(logger *slog.Logger, o *Options) *Handler {
 		nil,
 		o.FeatureRegistry,
 		api_v1.OpenAPIOptions{
-			ExternalURL: o.ExternalURL.String(),
-			Version:     version,
+			ExternalURL:    o.ExternalURL.String(),
+			Version:        version,
+			MaxSearchLimit: o.MaxSearchLimit,
 		},
 		o.Parser,
 	)
@@ -442,6 +447,10 @@ func New(logger *slog.Logger, o *Options) *Handler {
 		r.Set(features.API, "admin", o.EnableAdminAPI)
 		r.Set(features.API, "remote_write_receiver", o.EnableRemoteWriteReceiver)
 		r.Set(features.API, "otlp_write_receiver", o.EnableOTLPWriteReceiver)
+		r.Set(features.API, "search", o.EnableSearch)
+		for _, alg := range api_v1.FuzzAlgorithms() {
+			r.Enable(features.API, "search_fuzz_alg_"+alg)
+		}
 		r.Set(features.OTLPReceiver, "delta_conversion", o.ConvertOTLPDelta)
 		r.Set(features.OTLPReceiver, "native_delta_ingestion", o.NativeOTLPDeltaIngestion)
 		r.Enable(features.API, "label_values_match") // match[] parameter for label values endpoint.
@@ -677,14 +686,14 @@ func (h *Handler) testReady(f http.HandlerFunc) http.HandlerFunc {
 		case NotReady:
 			w.Header().Set("X-Prometheus-Stopping", "false")
 			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprintf(w, "Service Unavailable")
+			fmt.Fprint(w, "Service Unavailable")
 		case Stopping:
 			w.Header().Set("X-Prometheus-Stopping", "true")
 			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprintf(w, "Service Unavailable")
+			fmt.Fprint(w, "Service Unavailable")
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintf(w, "Unknown state")
+			fmt.Fprint(w, "Unknown state")
 		}
 	}
 }
@@ -943,10 +952,10 @@ func (h *Handler) quit(w http.ResponseWriter, _ *http.Request) {
 	h.quitOnce.Do(func() {
 		closed = true
 		close(h.quitCh)
-		fmt.Fprintf(w, "Requesting termination... Goodbye!")
+		fmt.Fprint(w, "Requesting termination... Goodbye!")
 	})
 	if !closed {
-		fmt.Fprintf(w, "Termination already in progress.")
+		fmt.Fprint(w, "Termination already in progress.")
 	}
 }
 

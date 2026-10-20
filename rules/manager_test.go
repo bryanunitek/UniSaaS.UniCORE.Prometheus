@@ -43,11 +43,13 @@ import (
 	"github.com/prometheus/prometheus/model/timestamp"
 	"github.com/prometheus/prometheus/model/value"
 	"github.com/prometheus/prometheus/promql"
+	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/promql/promqltest"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/tsdb/tsdbutil"
+	"github.com/prometheus/prometheus/util/stats"
 	"github.com/prometheus/prometheus/util/teststorage"
 	prom_testutil "github.com/prometheus/prometheus/util/testutil"
 )
@@ -976,6 +978,7 @@ func TestMetricsUpdate(t *testing.T) {
 		"prometheus_rule_evaluation_failures_total",
 		"prometheus_rule_group_interval_seconds",
 		"prometheus_rule_group_last_duration_seconds",
+		"prometheus_rule_group_last_rule_duration_sum_seconds",
 		"prometheus_rule_group_last_evaluation_timestamp_seconds",
 		"prometheus_rule_group_rules",
 	}
@@ -1020,11 +1023,11 @@ func TestMetricsUpdate(t *testing.T) {
 	}{
 		{
 			files:   files,
-			metrics: 12,
+			metrics: 14,
 		},
 		{
 			files:   files[:1],
-			metrics: 6,
+			metrics: 7,
 		},
 		{
 			files:   files[:0],
@@ -1032,7 +1035,7 @@ func TestMetricsUpdate(t *testing.T) {
 		},
 		{
 			files:   files[1:],
-			metrics: 6,
+			metrics: 7,
 		},
 	}
 
@@ -1516,6 +1519,24 @@ func TestNativeHistogramsInRecordingRules(t *testing.T) {
 	require.Equal(t, ts.Add(10*time.Second).UnixMilli(), tsp)
 	require.Equal(t, expHist, fh)
 	require.Equal(t, chunkenc.ValNone, it.Next())
+}
+
+// TestManager_LoadGroups_WithoutLogger covers the nil pointer dereference in the
+// default GroupLoader. ManagerOptions.Logger is optional, but NewManager used to
+// build FileLoader before substituting a no-op logger for a nil one, so the loader
+// kept the nil and panicked on the first rule file it had to warn about.
+func TestManager_LoadGroups_WithoutLogger(t *testing.T) {
+	ruleManager := NewManager(&ManagerOptions{})
+
+	var (
+		groups map[string]*Group
+		errs   []error
+	)
+	require.NotPanics(t, func() {
+		groups, errs = ruleManager.LoadGroups(time.Second, labels.EmptyLabels(), "", nil, false, "fixtures/rules_multi_doc.yaml")
+	})
+	require.Empty(t, errs)
+	require.Len(t, groups, 1)
 }
 
 func TestManager_LoadGroups_ShouldCheckWhetherEachRuleHasDependentsAndDependencies(t *testing.T) {
@@ -2773,3 +2794,35 @@ func BenchmarkRuleDependencyController_AnalyseRules(b *testing.B) {
 		}
 	}
 }
+
+// TestEngineQueryFunc_ClosesQuery verifies EngineQueryFunc Close()s the
+// promql.Query it creates after every evaluation.
+func TestEngineQueryFunc_ClosesQuery(t *testing.T) {
+	eng := &closeCountingEngine{}
+	qf := EngineQueryFunc(eng, nil)
+
+	_, err := qf(context.Background(), "vector(0)", time.Unix(0, 0))
+	require.NoError(t, err)
+	require.Equal(t, 1, eng.q.closeCalls, "Close must be called exactly once")
+}
+
+type closeCountingEngine struct{ q closeCountingQuery }
+
+func (e *closeCountingEngine) NewInstantQuery(context.Context, storage.Queryable, promql.QueryOpts, string, time.Time) (promql.Query, error) {
+	return &e.q, nil
+}
+
+func (e *closeCountingEngine) NewRangeQuery(context.Context, storage.Queryable, promql.QueryOpts, string, time.Time, time.Time, time.Duration) (promql.Query, error) {
+	return &e.q, nil
+}
+
+type closeCountingQuery struct{ closeCalls int }
+
+func (*closeCountingQuery) Exec(context.Context) *promql.Result {
+	return &promql.Result{Value: promql.Vector{}}
+}
+func (q *closeCountingQuery) Close()                    { q.closeCalls++ }
+func (*closeCountingQuery) Statement() parser.Statement { return nil }
+func (*closeCountingQuery) Stats() *stats.Statistics    { return nil }
+func (*closeCountingQuery) Cancel()                     {}
+func (*closeCountingQuery) String() string              { return "" }
