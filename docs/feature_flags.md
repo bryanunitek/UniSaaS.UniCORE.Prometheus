@@ -45,13 +45,31 @@ When enabled, passing `stats=all` in a query request returns per-step
 statistics. The following sample statistics are included:
 
 - **totalQueryableSamples** / **totalQueryableSamplesPerStep**: Total number of samples *loaded* during the query. For range-vector functions (e.g. `rate`, `sum_over_time`) evaluated over multiple steps, each step counts the full window (the same point may be counted in multiple steps).
-- **samplesRead** / **samplesReadPerStep**: Total number of samples *read* (I/O). For range-vector functions in range queries, only *new* points per step are counted (step 0: full window; later steps: points not seen in the previous step). For other query types, this equals totalQueryableSamples.
+- **samplesRead** / **samplesReadPerStep**: Total number of samples *read* by the evaluator (its input, not physical storage I/O). For range-vector functions in range queries, only *new* points per step are counted (step 0: full window; later steps: points not seen in the previous step). See [Query statistics](querying/api.md#query-statistics) for the exact semantics.
 - **peakSamples**: Peak number of samples in memory during evaluation (used for the `query.max-samples` limit).
 
-The Prometheus server exposes two counters for observability: `prometheus_engine_query_samples_total` (samples loaded, full window per step) and `prometheus_engine_query_samples_read_total` (samples read, delta per step for range-vector).
+The Prometheus server exposes two counters for observability: `prometheus_engine_query_samples_total` (logical underlying sample consumption, full window per step) and `prometheus_engine_query_samples_read_total` (samples read, delta per step for range-vector).
 
 When disabled in either the engine or the query, per-step statistics are not
 computed at all.
+
+## Unquoted UTF-8 names in PromQL
+
+`--enable-feature=promql-unquoted-utf8-names`
+
+Allows Unicode letters and dots after the first character in unquoted metric and
+label names. For example:
+
+```promql
+http.server.request.duration{service.name="api"}
+温度{場所="東京"}
+sum by (service.name) (rate(http.server.requests[5m]))
+requests_total + on (service.name) group_left (équipe) service_info
+```
+
+See [metric and label names](querying/basics.md#metric-and-label-names) for the
+character rules and compatibility details. This flag is also supported by
+promtool when checking or testing rules and parsing or formatting queries.
 
 ## Experimental PromQL functions
 
@@ -112,7 +130,7 @@ Besides enabling this feature in Prometheus, start timestamps need to be exposed
 
 `--enable-feature=use-start-timestamps`
 
-Enables the use of start timestamps (ST) in PromQL functions such as `rate()`, `irate()`, `increase()` and `start_timestamp()`. This feature doesn't currently work with extended range selectors (`promql-extended-range-selectors`). 
+Enables the use of start timestamps (ST) in PromQL functions such as `rate()`, `irate()`, `increase()` and `start_timestamp()`. This feature doesn't currently work with [extended range selectors](querying/basics.md#extended-range-selectors).
 
 ## Start timestamp (ST) synthesis
 
@@ -149,7 +167,7 @@ Fall back to serving the old (Prometheus 2.x) web UI instead of the new UI. The 
 
 `--enable-feature=metadata-wal-records`
 
-When enabled, Prometheus will store metadata in-memory and keep track of
+When enabled, Prometheus (both in server and agent modes) will store metadata in-memory and keep track of
 metadata changes as WAL records on a per-series basis.
 
 This must be used if you would like to send metadata using the new remote write 2.0.
@@ -309,42 +327,9 @@ The [`st-storage`](#start-timestamp-st-native-storage) feature automatically ena
 
 ## Extended Range Selectors
 
-`--enable-feature=promql-extended-range-selectors`
-
-Enables experimental `anchored` and `smoothed` modifiers for PromQL range and instant selectors. These modifiers provide more control over how range boundaries are handled in functions like `rate` and `increase`, especially with missing or irregular data.
-
-Native Histograms are not yet supported by the extended range selectors.
-
-### `anchored`
-
-Uses the most recent sample (within the lookback delta) at the beginning of the range, or alternatively the first sample within the range if there is no sample within the lookback delta. The last sample within the range is also used at the end of the range. No extrapolation or interpolation is applied, so this is useful to get the direct difference between sample values.
-
-Anchored range selector work with: `resets`, `changes`, `rate`, `increase`, and `delta`.
-
-Example query:
-`increase(http_requests_total[5m] anchored)`
-
-**Note**: When using the anchored modifier with the increase function, the results returned are integers.
-
-### `smoothed`
-
-In range selectors, linearly interpolates values at the range boundaries, using the sample values before and after the boundaries for an improved estimation that is robust against irregular scrapes and missing samples. However, it requires a sample after the evaluation interval to work properly, see note below.
-
-For instant selectors, values are linearly interpolated at the evaluation timestamp using the samples immediately before and after that point.
-
-Smoothed range selectors work with: `rate`, `increase`, and `delta`.
-
-Example query:
-`rate(http_requests_total[step()] smoothed)`
-
-> **Note for alerting and recording rules:**
-> The `smoothed` modifier requires samples after the evaluation interval, so using it directly in alerting or recording rules will typically *under-estimate* the result, as future samples are not available at evaluation time.
-> To use `smoothed` safely in rules, you **must** apply a `query_offset` to the rule group (see [documentation](https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/#rule_group)) to ensure the calculation window is fully in the past and all needed samples are available.
-> For critical alerting, set the offset to at least one scrape interval; for less critical or more resilient use cases, consider a larger offset (multiple scrape intervals) to tolerate missed scrapes.
-
-For more details, see the [design doc](https://github.com/prometheus/proposals/blob/main/proposals/2025-04-04_extended-range-selectors-semantics.md).
-
-**Note**: Extended Range Selectors are not supported for subqueries.
+The `--enable-feature=promql-extended-range-selectors` flag is now a no-op.
+The `anchored` and `smoothed` modifiers are enabled by default. See
+[extended range selectors](querying/basics.md#extended-range-selectors).
 
 ## Binary operator fill modifiers
 
@@ -408,3 +393,47 @@ instead.
 When enabled, Prometheus advertises support for Zstandard-compressed scrape responses in addition to gzip. The uncompressed response remains subject to the configured `body_size_limit`.
 
 When the flag is disabled, Prometheus does not advertise `zstd`. A target that answers with `Content-Encoding: zstd` regardless fails the scrape, because Prometheus cannot decode the body.
+
+## Query cost
+
+`--enable-feature=query-cost`
+
+Enables query cost estimation and enforcement. When set, Prometheus exposes the
+[`/api/v1/query_cost` and `/api/v1/query_range_cost`](querying/api.md#query-cost)
+endpoints, which provide a pre-execution *estimate* of the resource cost of a
+query (series touched and samples read) without executing it, and the instant
+and range query endpoints accept a `cost=true` boolean parameter that adds an
+estimated-versus-actual cost comparison to the response. Estimation enumerates matching index entries and samples a bounded amount of
+chunk data. Both values can overestimate or underestimate actual cost; the
+estimate is informational only and is never used to reject a query. Queries
+using `info()` return a warning because its runtime-dependent additional reads
+are omitted from the estimate.
+
+This flag also activates enforcement of the reloadable cost limits configured
+under the `global:` section of the
+[configuration file](configuration/configuration.md#configuration-file):
+`query_max_series`, `query_max_samples_read`, and `query_max_duration`. These
+limits are enforced *during* query execution against the query's actual running
+cost: a query is rejected as soon as the number of series it loads or the number
+of samples it reads exceeds the configured limit, and `query_max_duration`
+surfaces as a query timeout. The limits are reloaded together with the rest of
+the configuration and have no effect when the feature flag is not set.
+
+These limits apply to every query the engine evaluates, not only to API
+requests. Recording and alerting rules are subject to them too: a rule whose
+query exceeds a limit fails to evaluate like any other query error, and
+`query_max_duration` replaces `--query.timeout` as the timeout of rule queries.
+
+A client may lower any of these ceilings for a single request with the
+`max_series`, `max_samples_read` and `max_query_duration` query parameters. A
+request asking for a value above the operator-set ceiling is rejected with HTTP
+400 (`bad_data`) rather than silently clamped. For `max_query_duration`, the
+ceiling is `--query.timeout` while `query_max_duration` is unset. A `timeout`
+parameter above the effective duration ceiling is capped at that ceiling.
+
+`query_max_duration` overrides `--query.timeout` only while this feature flag is
+enabled. The command-line flag remains supported and controls the timeout when
+the feature is disabled or `query_max_duration` is unset.
+
+Clients can detect the feature through [`/api/v1/features`](querying/api.md#features),
+where it is reported as `query_cost` in the `api` category.

@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+	"unique"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
@@ -99,6 +100,9 @@ type Options struct {
 	// persisted to the WAL for samples that include a non-zero start timestamp in
 	// supported record types.
 	EnableSTStorage bool
+
+	// EnableMetadataWALRecords represents 'metadata-wal-records' feature flag.
+	EnableMetadataWALRecords bool
 
 	// CheckpointFromInMemorySeries changes checkpoint implementation to use only in-memory series data when building a checkpoint.
 	// This prevents re-reading the previous checkpoint and segments from disk.
@@ -250,6 +254,7 @@ func (m *dbMetrics) Unregister() {
 type deletedRefMeta struct {
 	lastSegment int
 	labels      labels.Labels
+	meta        unique.Handle[metadata.Metadata]
 }
 
 // DB represents a WAL-only storage. It implements storage.DB.
@@ -272,6 +277,7 @@ type DB struct {
 	walReplaySamplesPool         zeropool.Pool[[]record.RefSample]
 	walReplayHistogramsPool      zeropool.Pool[[]record.RefHistogramSample]
 	walReplayFloatHistogramsPool zeropool.Pool[[]record.RefFloatHistogramSample]
+	walReplayMetadataPool        zeropool.Pool[[]record.RefMetadata]
 
 	nextRef *atomic.Uint64
 	series  *stripeSeries
@@ -340,6 +346,8 @@ func Open(l *slog.Logger, reg prometheus.Registerer, rs *remote.Storage, dir str
 				pendingHistograms:      make([]record.RefHistogramSample, 0, 100),
 				pendingFloatHistograms: make([]record.RefFloatHistogramSample, 0, 100),
 				pendingExamplars:       make([]record.RefExemplar, 0, 10),
+				pendingMetadata:        make([]record.RefMetadata, 0, 100),
+				metadataSeries:         make([]*memSeries, 0, 100),
 			},
 		}
 	}
@@ -352,6 +360,8 @@ func Open(l *slog.Logger, reg prometheus.Registerer, rs *remote.Storage, dir str
 				pendingHistograms:      make([]record.RefHistogramSample, 0, 100),
 				pendingFloatHistograms: make([]record.RefFloatHistogramSample, 0, 100),
 				pendingExamplars:       make([]record.RefExemplar, 0, 10),
+				pendingMetadata:        make([]record.RefMetadata, 0, 100),
+				metadataSeries:         make([]*memSeries, 0, 100),
 			},
 		}
 	}
@@ -476,6 +486,7 @@ func (db *DB) resetWALReplayResources() {
 	db.walReplaySamplesPool = zeropool.Pool[[]record.RefSample]{}
 	db.walReplayHistogramsPool = zeropool.Pool[[]record.RefHistogramSample]{}
 	db.walReplayFloatHistogramsPool = zeropool.Pool[[]record.RefFloatHistogramSample]{}
+	db.walReplayMetadataPool = zeropool.Pool[[]record.RefMetadata]{}
 }
 
 func (db *DB) loadWAL(r *wlog.Reader, duplicateRefToValidRef map[chunks.HeadSeriesRef]chunks.HeadSeriesRef, currentSegmentOrCheckpoint int) (err error) {
@@ -542,6 +553,18 @@ func (db *DB) loadWAL(r *wlog.Reader, duplicateRefToValidRef map[chunks.HeadSeri
 					return
 				}
 				decoded <- floatHistograms
+			case record.Metadata:
+				meta := db.walReplayMetadataPool.Get()[:0]
+				meta, err = dec.Metadata(rec, meta)
+				if err != nil {
+					errCh <- &wlog.CorruptionErr{
+						Err:     fmt.Errorf("decode metadata: %w", err),
+						Segment: r.Segment(),
+						Offset:  r.Offset(),
+					}
+					return
+				}
+				decoded <- meta
 			case record.Tombstones, record.Exemplars:
 				// We don't care about tombstones or exemplars during replay.
 				// TODO: If decide to decode exemplars, we should make sure to prepopulate
@@ -582,7 +605,7 @@ func (db *DB) loadWAL(r *wlog.Reader, duplicateRefToValidRef map[chunks.HeadSeri
 						if db.opts.CheckpointFromInMemorySeries {
 							lbls = entry.Labels
 						}
-						db.deleted[entry.Ref] = deletedRefMeta{lastSegment: currentSegmentOrCheckpoint, labels: lbls}
+						db.deleted[entry.Ref] = deletedRefMeta{lastSegment: currentSegmentOrCheckpoint, labels: lbls, meta: meta.meta}
 					}
 				} else {
 					db.metrics.numActiveSeries.Inc()
@@ -664,6 +687,42 @@ func (db *DB) loadWAL(r *wlog.Reader, duplicateRefToValidRef map[chunks.HeadSeri
 			}
 			clear(v) // Zero out to avoid retaining histogram data.
 			db.walReplayFloatHistogramsPool.Put(v[:0])
+		case []record.RefMetadata:
+			// Metadata records are replayed unconditionally regardless of EnableMetadataWALRecords
+			// to preserve existing metadata from the WAL for forward compatibility (matching TSDB Head replay).
+			for _, entry := range v {
+				m := unique.Make(metadata.Metadata{
+					Type: record.ToMetricType(entry.Type),
+					Unit: entry.Unit,
+					Help: entry.Help,
+				})
+				origRef := entry.Ref
+				if ref, ok := duplicateRefToValidRef[entry.Ref]; ok {
+					if meta, ok := db.deleted[entry.Ref]; ok && meta.lastSegment <= currentSegmentOrCheckpoint {
+						meta.lastSegment = currentSegmentOrCheckpoint
+						if db.opts.CheckpointFromInMemorySeries {
+							meta.meta = m
+						}
+						db.deleted[entry.Ref] = meta
+					}
+					entry.Ref = ref
+				}
+				series := db.series.GetByID(entry.Ref)
+				if series == nil {
+					nonExistentSeriesRefs.Inc()
+					continue
+				}
+				// NOTE: agent.Checkpoint writes activeSeries before deletedSeries, so an older
+				// deleted series (origRef < entry.Ref) can be replayed after a recreated active
+				// series and must not overwrite its metadata.
+				if origRef < entry.Ref && !metadata.IsZeroHandle(series.meta) {
+					continue
+				}
+
+				series.meta = m
+			}
+			clear(v) // Zero out to avoid retaining metadata strings.
+			db.walReplayMetadataPool.Put(v[:0])
 		default:
 			panic(fmt.Errorf("unexpected decoded type: %T", d))
 		}
@@ -699,18 +758,7 @@ Loop:
 			// samples and may be deleted from the WAL. Their most recent append
 			// timestamp is compared to ts, and if that timestamp is older then ts,
 			// they are considered inactive and may be deleted.
-			//
-			// Subtracting a duration from ts will add a buffer for when series are
-			// considered inactive and safe for deletion.
-			ts := max(db.rs.LowestSentTimestamp()-db.opts.MinWALTime, 0)
-
-			// Network issues can prevent the result of getRemoteWriteTimestamp from
-			// changing. We don't want data in the WAL to grow forever, so we set a cap
-			// on the maximum age data can be. If our ts is older than this cutoff point,
-			// we'll shift it forward to start deleting very stale data.
-			if maxTS := timestamp.FromTime(time.Now()) - db.opts.MaxWALTime; ts < maxTS {
-				ts = maxTS
-			}
+			ts := walTruncationTime(db.opts, db.rs.LowestSentTimestamp(), timestamp.FromTime(time.Now()))
 
 			db.logger.Debug("truncating the WAL", "ts", ts)
 			if err := db.truncate(ts); err != nil {
@@ -718,6 +766,21 @@ Loop:
 			}
 		}
 	}
+}
+
+// walTruncationTime returns the timestamp before which inactive series may be
+// truncated from the WAL, keeping between MinWALTime and MaxWALTime of data.
+func walTruncationTime(opts *Options, lowestSentTs, nowTS int64) int64 {
+	// Keep MinWALTime of data behind what remote write has sent. Floor at 0
+	// since lowestSentTs is 0 until remote write sends something.
+	ts := max(lowestSentTs-opts.MinWALTime, 0)
+
+	// Keep at most MaxWALTime of data, even if remote write is stalled.
+	ts = max(ts, nowTS-opts.MaxWALTime)
+
+	// Keep at least MinWALTime of data, even if lowestSentTs is in the future.
+	// Floor at 0 so the cutoff is never negative.
+	return min(ts, max(nowTS-opts.MinWALTime, 0))
 }
 
 // keepSeriesInWALCheckpointFn returns a function that is used to determine whether a series record should be kept in the checkpoint.
@@ -774,7 +837,11 @@ func (db *DB) truncate(mint int64) error {
 	if db.opts.CheckpointFromInMemorySeries {
 		err = Checkpoint(db.logger, db.wal, last, db.opts.CheckpointBatchSize, db.series.allSeries(), deletedSeriesIter(db.deleted, last))
 	} else {
-		_, err = wlog.Checkpoint(db.logger, db.wal, first, last, db.keepSeriesInWALCheckpointFn(last), mint, db.opts.EnableSTStorage)
+		// writeMinValidTime is false: the agent has no use for ReadMinValidTime, and unlike
+		// Head's own replay, the agent's replay treats any unrecognized record type as
+		// corruption. Writing that record here would risk data loss on a downgrade to an
+		// older agent that doesn't know about it.
+		_, err = wlog.Checkpoint(db.logger, db.wal, first, last, db.keepSeriesInWALCheckpointFn(last), mint, db.opts.EnableSTStorage, false)
 	}
 
 	if err != nil {
@@ -826,8 +893,8 @@ func (db *DB) gc(mint int64) {
 	// We want to keep series records for any newly deleted series
 	// until we've passed the last recorded segment. This prevents
 	// the WAL having samples for series records that no longer exist.
-	for ref, lset := range deleted {
-		db.deleted[ref] = deletedRefMeta{lastSegment: last, labels: lset}
+	for ref, ds := range deleted {
+		db.deleted[ref] = deletedRefMeta{lastSegment: last, labels: ds.labels, meta: ds.meta}
 	}
 
 	db.metrics.numWALSeriesPendingDeletion.Set(float64(len(db.deleted)))
@@ -879,6 +946,7 @@ type appenderBase struct {
 	pendingHistograms      []record.RefHistogramSample
 	pendingFloatHistograms []record.RefFloatHistogramSample
 	pendingExamplars       []record.RefExemplar
+	pendingMetadata        []record.RefMetadata
 
 	// Pointers to the series referenced by each element of pendingSamples.
 	// Series lock is not held on elements.
@@ -891,6 +959,10 @@ type appenderBase struct {
 	// Pointers to the series referenced by each element of pendingFloatHistograms.
 	// Series lock is not held on elements.
 	floatHistogramSeries []*memSeries
+
+	// Pointers to the series referenced by each element of pendingMetadata.
+	// Series lock is not held on elements.
+	metadataSeries []*memSeries
 }
 
 type appender struct {
@@ -1087,9 +1159,37 @@ func (a *appender) AppendHistogram(ref storage.SeriesRef, l labels.Labels, t int
 	return storage.SeriesRef(series.ref), nil
 }
 
-func (*appender) UpdateMetadata(storage.SeriesRef, labels.Labels, metadata.Metadata) (storage.SeriesRef, error) {
-	// TODO: Wire metadata in the Agent's appender.
-	return 0, nil
+func (a *appender) UpdateMetadata(ref storage.SeriesRef, l labels.Labels, meta metadata.Metadata) (storage.SeriesRef, error) {
+	if !a.opts.EnableMetadataWALRecords || meta.IsEmpty() {
+		return 0, nil
+	}
+
+	var series *memSeries
+	if ref != 0 {
+		series = a.series.GetByID(chunks.HeadSeriesRef(ref))
+	}
+	if series == nil {
+		series = a.series.GetByHash(l.Hash(), l)
+	}
+	if series == nil {
+		return 0, fmt.Errorf("unknown series when trying to add metadata with HeadSeriesRef: %d and labels: %s", ref, l)
+	}
+
+	series.Lock()
+	hasNewMetadata := metadata.IsZeroHandle(series.meta) || !series.meta.Value().Equals(meta)
+	series.Unlock()
+
+	if hasNewMetadata {
+		a.pendingMetadata = append(a.pendingMetadata, record.RefMetadata{
+			Ref:  series.ref,
+			Type: record.GetMetricType(meta.Type),
+			Unit: meta.Unit,
+			Help: meta.Help,
+		})
+		a.metadataSeries = append(a.metadataSeries, series)
+	}
+
+	return storage.SeriesRef(series.ref), nil
 }
 
 func (a *appender) AppendHistogramSTZeroSample(ref storage.SeriesRef, l labels.Labels, t, st int64, h *histogram.Histogram, fh *histogram.FloatHistogram) (storage.SeriesRef, error) {
@@ -1233,6 +1333,14 @@ func (a *appenderBase) log() error {
 		buf = buf[:0]
 	}
 
+	if len(a.pendingMetadata) > 0 {
+		buf = encoder.Metadata(a.pendingMetadata, buf)
+		if err := a.wal.Log(buf); err != nil {
+			return err
+		}
+		buf = buf[:0]
+	}
+
 	if len(a.pendingSamples) > 0 {
 		buf = encoder.Samples(a.pendingSamples, buf)
 		if err := a.wal.Log(buf); err != nil {
@@ -1304,6 +1412,16 @@ func (a *appenderBase) log() error {
 			a.metrics.totalOutOfOrderSamples.Inc()
 		}
 	}
+	for i, m := range a.pendingMetadata {
+		series = a.metadataSeries[i]
+		series.Lock()
+		series.meta = unique.Make(metadata.Metadata{
+			Type: record.ToMetricType(m.Type),
+			Unit: m.Unit,
+			Help: m.Help,
+		})
+		series.Unlock()
+	}
 
 	return nil
 }
@@ -1315,9 +1433,13 @@ func (a *appenderBase) clearData() {
 	a.pendingHistograms = a.pendingHistograms[:0]
 	a.pendingFloatHistograms = a.pendingFloatHistograms[:0]
 	a.pendingExamplars = a.pendingExamplars[:0]
+	clear(a.pendingMetadata)
+	a.pendingMetadata = a.pendingMetadata[:0]
 	a.sampleSeries = a.sampleSeries[:0]
 	a.histogramSeries = a.histogramSeries[:0]
 	a.floatHistogramSeries = a.floatHistogramSeries[:0]
+	clear(a.metadataSeries)
+	a.metadataSeries = a.metadataSeries[:0]
 }
 
 func (a *appenderBase) rollback() error {
